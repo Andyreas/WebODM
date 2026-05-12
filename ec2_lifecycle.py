@@ -100,13 +100,17 @@ def has_active_tasks():
         if r.status_code == 401:
             webodm_login()
             r = session.get(f"{WO_URL}/api/projects/", timeout=10)
-        for project in r.json().get("results", []):
+        data = r.json()
+        projects = data if isinstance(data, list) else data.get("results", [])
+        for project in projects:
             pid = project["id"]
             tr = session.get(
                 f"{WO_URL}/api/projects/{pid}/tasks/",
                 timeout=10,
             )
-            if any(t.get("status") in ACTIVE for t in tr.json().get("results", [])):
+            tdata = tr.json()
+            tasks = tdata if isinstance(tdata, list) else tdata.get("results", [])
+            if any(t.get("status") in ACTIVE for t in tasks):
                 return True
     except Exception as e:
         log.warning("Could not check WebODM tasks: %s", e)
