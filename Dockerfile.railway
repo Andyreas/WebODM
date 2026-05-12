@@ -1,0 +1,3 @@
+FROM webodm/webodm_webapp
+COPY railway-start.sh /webodm/railway-start.sh
+RUN chmod +x /webodm/railway-start.sh
