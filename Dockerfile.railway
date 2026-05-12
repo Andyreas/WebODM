@@ -1,5 +1,5 @@
 FROM webodm/webodm_webapp
-RUN pip install --no-cache-dir boto3
+RUN pip install --no-cache-dir boto3 paramiko
 COPY railway-start.sh /webodm/railway-start.sh
 COPY ec2_lifecycle.py /webodm/ec2_lifecycle.py
 RUN chmod +x /webodm/railway-start.sh
