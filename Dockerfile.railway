@@ -3,3 +3,16 @@ RUN pip install --no-cache-dir boto3 paramiko
 COPY railway-start.sh /webodm/railway-start.sh
 COPY ec2_lifecycle.py /webodm/ec2_lifecycle.py
 RUN chmod +x /webodm/railway-start.sh
+
+# Patch Sharp to allow unlimited pixel sizes so WebODM's textureCompress
+# can process large ODM texture atlases and scale them down for the browser.
+RUN node -e " \
+  const fs = require('fs'); \
+  const f = '/webodm/node_modules/sharp/lib/constructor.js'; \
+  try { \
+    let c = fs.readFileSync(f, 'utf8'); \
+    const p = c.replace(/268402689/g, '0'); \
+    if (p !== c) { fs.writeFileSync(f, p); console.log('sharp: pixel limit removed'); } \
+    else { console.log('sharp: pattern not found, skipping'); } \
+  } catch(e) { console.log('sharp patch skipped:', e.message); } \
+"
