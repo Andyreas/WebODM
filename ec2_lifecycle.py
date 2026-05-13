@@ -222,7 +222,7 @@ def _get_all_tasks():
     tasks = []
     try:
         r = session.get(f"{WO_URL}/api/projects/", timeout=10)
-        if r.status_code == 401:
+        if r.status_code in (401, 403):
             webodm_login()
             r = session.get(f"{WO_URL}/api/projects/", timeout=10)
         data = r.json()
