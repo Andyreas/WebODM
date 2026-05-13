@@ -6,13 +6,29 @@ RUN chmod +x /webodm/railway-start.sh
 
 # Patch Sharp to allow unlimited pixel sizes so WebODM's textureCompress
 # can process large ODM texture atlases and scale them down for the browser.
+# Patch all Sharp JS files + gltf-transform functions that instantiate sharp().
 RUN node -e " \
   const fs = require('fs'); \
-  const f = '/webodm/node_modules/sharp/lib/constructor.js'; \
+  const { execSync } = require('child_process'); \
+  \
+  // 1. Replace pixel limit constant in all sharp lib files \
+  const sharpFiles = execSync('find /webodm/node_modules/sharp/lib -name \"*.js\"').toString().trim().split('\n'); \
+  let patched = 0; \
+  sharpFiles.forEach(f => { \
+    try { \
+      let c = fs.readFileSync(f, 'utf8'); \
+      const p = c.replace(/268402689/g, '0'); \
+      if (p !== c) { fs.writeFileSync(f, p); console.log('sharp patched:', f); patched++; } \
+    } catch(e) {} \
+  }); \
+  \
+  // 2. Patch gltf-transform functions.cjs to pass limitInputPixels:false to sharp() \
+  const gtf = '/webodm/node_modules/@gltf-transform/functions/dist/functions.cjs'; \
   try { \
-    let c = fs.readFileSync(f, 'utf8'); \
-    const p = c.replace(/268402689/g, '0'); \
-    if (p !== c) { fs.writeFileSync(f, p); console.log('sharp: pixel limit removed'); } \
-    else { console.log('sharp: pattern not found, skipping'); } \
-  } catch(e) { console.log('sharp patch skipped:', e.message); } \
+    let c = fs.readFileSync(gtf, 'utf8'); \
+    const p = c.replace(/sharp\(([^)]+)\)(?!\s*[,.]limitInputPixels)/g, 'sharp(\$1,{limitInputPixels:false})'); \
+    if (p !== c) { fs.writeFileSync(gtf, p); console.log('gltf-transform patched'); patched++; } \
+  } catch(e) { console.log('gltf-transform patch skipped:', e.message); } \
+  \
+  console.log('Total patches applied:', patched); \
 "
