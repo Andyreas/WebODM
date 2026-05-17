@@ -6,29 +6,36 @@ RUN chmod +x /webodm/railway-start.sh
 
 # Patch Sharp to allow unlimited pixel sizes so WebODM's textureCompress
 # can process large ODM texture atlases and scale them down for the browser.
-# Patch all Sharp JS files + gltf-transform functions that instantiate sharp().
+#
+# Strategy: remove the throw in output.js that raises "Input image exceeds
+# pixel limit", then reset limitInputPixels to 0 everywhere it appears.
 RUN node -e " \
   const fs = require('fs'); \
   const { execSync } = require('child_process'); \
+  let total = 0; \
   \
-  // 1. Replace pixel limit constant in all sharp lib files \
-  const sharpFiles = execSync('find /webodm/node_modules/sharp/lib -name \"*.js\"').toString().trim().split('\n'); \
-  let patched = 0; \
-  sharpFiles.forEach(f => { \
+  // 1. Remove the throw statement in output.js ─ this is where the error fires \
+  const out = '/webodm/node_modules/sharp/lib/output.js'; \
+  try { \
+    let c = fs.readFileSync(out, 'utf8'); \
+    const before = c; \
+    c = c.replace(/if\s*\([^)]*limitInputPixels[^}]+\}\s*;?/gs, '/* pixel-limit check removed */'); \
+    c = c.replace(/throw[^;]*pixel limit[^;]*;/g, '/* pixel-limit throw removed */'); \
+    if (c !== before) { fs.writeFileSync(out, c); console.log('✓ output.js patched'); total++; } \
+    else { console.log('output.js: no match, printing context...'); \
+      const idx = c.indexOf('pixel limit'); \
+      if (idx >= 0) console.log(c.substring(Math.max(0,idx-200), idx+200)); } \
+  } catch(e) { console.log('output.js error:', e.message); } \
+  \
+  // 2. Zero out limitInputPixels default in all sharp lib files \
+  execSync('find /webodm/node_modules/sharp/lib -name \"*.js\"').toString().trim().split('\n').forEach(f => { \
     try { \
       let c = fs.readFileSync(f, 'utf8'); \
-      const p = c.replace(/268402689/g, '0'); \
-      if (p !== c) { fs.writeFileSync(f, p); console.log('sharp patched:', f); patched++; } \
+      const p = c.replace(/limitInputPixels\s*[:=]\s*268402689/g, 'limitInputPixels:0') \
+                 .replace(/268402689/g, '0'); \
+      if (p !== c) { fs.writeFileSync(f, p); console.log('✓ zeroed limit in', f); total++; } \
     } catch(e) {} \
   }); \
   \
-  // 2. Patch gltf-transform functions.cjs to pass limitInputPixels:false to sharp() \
-  const gtf = '/webodm/node_modules/@gltf-transform/functions/dist/functions.cjs'; \
-  try { \
-    let c = fs.readFileSync(gtf, 'utf8'); \
-    const p = c.replace(/sharp\(([^)]+)\)(?!\s*[,.]limitInputPixels)/g, 'sharp(\$1,{limitInputPixels:false})'); \
-    if (p !== c) { fs.writeFileSync(gtf, p); console.log('gltf-transform patched'); patched++; } \
-  } catch(e) { console.log('gltf-transform patch skipped:', e.message); } \
-  \
-  console.log('Total patches applied:', patched); \
+  console.log('Patches applied:', total); \
 "
