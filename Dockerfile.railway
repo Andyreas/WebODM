@@ -4,38 +4,12 @@ COPY railway-start.sh /webodm/railway-start.sh
 COPY ec2_lifecycle.py /webodm/ec2_lifecycle.py
 RUN chmod +x /webodm/railway-start.sh
 
-# Patch Sharp to allow unlimited pixel sizes so WebODM's textureCompress
-# can process large ODM texture atlases and scale them down for the browser.
-#
-# Strategy: remove the throw in output.js that raises "Input image exceeds
-# pixel limit", then reset limitInputPixels to 0 everywhere it appears.
+# Diagnostic: print output.js around line 163 so we can write the right patch
 RUN node -e " \
   const fs = require('fs'); \
-  const { execSync } = require('child_process'); \
-  let total = 0; \
-  \
-  // 1. Remove the throw statement in output.js ─ this is where the error fires \
-  const out = '/webodm/node_modules/sharp/lib/output.js'; \
-  try { \
-    let c = fs.readFileSync(out, 'utf8'); \
-    const before = c; \
-    c = c.replace(/if\s*\([^)]*limitInputPixels[^}]+\}\s*;?/gs, '/* pixel-limit check removed */'); \
-    c = c.replace(/throw[^;]*pixel limit[^;]*;/g, '/* pixel-limit throw removed */'); \
-    if (c !== before) { fs.writeFileSync(out, c); console.log('✓ output.js patched'); total++; } \
-    else { console.log('output.js: no match, printing context...'); \
-      const idx = c.indexOf('pixel limit'); \
-      if (idx >= 0) console.log(c.substring(Math.max(0,idx-200), idx+200)); } \
-  } catch(e) { console.log('output.js error:', e.message); } \
-  \
-  // 2. Zero out limitInputPixels default in all sharp lib files \
-  execSync('find /webodm/node_modules/sharp/lib -name \"*.js\"').toString().trim().split('\n').forEach(f => { \
-    try { \
-      let c = fs.readFileSync(f, 'utf8'); \
-      const p = c.replace(/limitInputPixels\s*[:=]\s*268402689/g, 'limitInputPixels:0') \
-                 .replace(/268402689/g, '0'); \
-      if (p !== c) { fs.writeFileSync(f, p); console.log('✓ zeroed limit in', f); total++; } \
-    } catch(e) {} \
-  }); \
-  \
-  console.log('Patches applied:', total); \
+  const lines = fs.readFileSync('/webodm/node_modules/sharp/lib/output.js','utf8').split('\n'); \
+  console.log('=== output.js lines 155-172 ==='); \
+  lines.slice(154,172).forEach((l,i)=>console.log(i+155+': '+l)); \
+  console.log('=== grep pixel limit ==='); \
+  lines.forEach((l,i)=>{ if(l.includes('pixel')) console.log(i+1+': '+l); }); \
 "
