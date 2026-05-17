@@ -1,8 +1,9 @@
 FROM webodm/webodm_webapp
-# cache-bust: 2026-05-17b
+# cache-bust: 2026-05-17c
 RUN pip install --no-cache-dir boto3 paramiko
 COPY railway-start.sh /webodm/railway-start.sh
 COPY ec2_lifecycle.py /webodm/ec2_lifecycle.py
+COPY coreplugins/wakeec2 /webodm/coreplugins/wakeec2
 RUN chmod +x /webodm/railway-start.sh
 
 # Wrap Sharp's module export so limitInputPixels:false is always passed.

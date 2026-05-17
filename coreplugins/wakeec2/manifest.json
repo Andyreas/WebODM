@@ -1,0 +1,7 @@
+{
+    "name": "Wake EC2",
+    "webodmMinVersion": "0.6.2",
+    "description": "Start the EC2 processing node without logging into AWS",
+    "version": "1.0.0",
+    "author": "PSK Sydväst"
+}
