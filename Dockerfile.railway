@@ -1,5 +1,5 @@
 FROM webodm/webodm_webapp
-# cache-bust: 2026-05-17
+# cache-bust: 2026-05-17b
 RUN pip install --no-cache-dir boto3 paramiko
 COPY railway-start.sh /webodm/railway-start.sh
 COPY ec2_lifecycle.py /webodm/ec2_lifecycle.py
@@ -14,7 +14,7 @@ RUN node -e " \
   const main = '/webodm/node_modules/sharp/' + (pkg.main || 'index.js'); \
   console.log('Wrapping Sharp entry point:', main); \
   const orig = fs.readFileSync(main, 'utf8'); \
-  const wrapper = '\nconst _S=module.exports;\nmodule.exports=function(i,o){return _S(i,Object.assign({limitInputPixels:false},o||{}));};\nObject.assign(module.exports,_S);\n'; \
+  const wrapper = '\nconst _S=module.exports;\nmodule.exports=function(i,o){return _S(i,Object.assign({},o||{},{limitInputPixels:false}));};\nObject.assign(module.exports,_S);\n'; \
   fs.writeFileSync(main, orig + wrapper); \
   console.log('Sharp wrapped — limitInputPixels:false always set'); \
 "
