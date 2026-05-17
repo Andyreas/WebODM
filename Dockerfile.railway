@@ -4,12 +4,16 @@ COPY railway-start.sh /webodm/railway-start.sh
 COPY ec2_lifecycle.py /webodm/ec2_lifecycle.py
 RUN chmod +x /webodm/railway-start.sh
 
-# Diagnostic: print output.js around line 163 so we can write the right patch
+# Wrap Sharp's module export so limitInputPixels:false is always passed.
+# The limit is enforced in libvips C-bindings, so JS-level patches don't work —
+# we must intercept the constructor call before it reaches native code.
 RUN node -e " \
   const fs = require('fs'); \
-  const lines = fs.readFileSync('/webodm/node_modules/sharp/lib/output.js','utf8').split('\n'); \
-  console.log('=== output.js lines 155-172 ==='); \
-  lines.slice(154,172).forEach((l,i)=>console.log(i+155+': '+l)); \
-  console.log('=== grep pixel limit ==='); \
-  lines.forEach((l,i)=>{ if(l.includes('pixel')) console.log(i+1+': '+l); }); \
+  const pkg = JSON.parse(fs.readFileSync('/webodm/node_modules/sharp/package.json','utf8')); \
+  const main = '/webodm/node_modules/sharp/' + (pkg.main || 'index.js'); \
+  console.log('Wrapping Sharp entry point:', main); \
+  const orig = fs.readFileSync(main, 'utf8'); \
+  const wrapper = '\nconst _S=module.exports;\nmodule.exports=function(i,o){return _S(i,Object.assign({limitInputPixels:false},o||{}));};\nObject.assign(module.exports,_S);\n'; \
+  fs.writeFileSync(main, orig + wrapper); \
+  console.log('Sharp wrapped — limitInputPixels:false always set'); \
 "
