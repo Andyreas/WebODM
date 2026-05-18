@@ -2,29 +2,25 @@
 {% block content %}
 {% csrf_token %}
 <style>
-.ec2-panel {
-    max-width: 460px;
-    margin: 48px auto;
-    text-align: center;
-    font-family: inherit;
+.wec2-section {
+    max-width: 520px;
+    margin: 32px auto;
 }
-.ec2-panel h3 {
-    margin-bottom: 8px;
+.wec2-section h4 {
+    border-bottom: 1px solid #dee2e6;
+    padding-bottom: 8px;
+    margin-bottom: 16px;
 }
-.ec2-panel .instance-id {
-    color: #888;
-    font-size: 0.9em;
-    margin-bottom: 20px;
-}
+
+/* EC2 panel */
 .state-badge {
     display: inline-block;
-    padding: 8px 24px;
-    border-radius: 24px;
+    padding: 6px 20px;
+    border-radius: 20px;
     font-weight: bold;
-    font-size: 1.15em;
-    letter-spacing: 0.5px;
-    margin: 12px 0 20px;
+    font-size: 1.1em;
     text-transform: capitalize;
+    margin: 10px 0 16px;
 }
 .state-running  { background: #d4edda; color: #155724; }
 .state-stopped  { background: #f8d7da; color: #721c24; }
@@ -33,87 +29,199 @@
 .state-stopping { background: #fde8d8; color: #7a3c00; }
 .state-unknown  { background: #e2e3e5; color: #383d41; }
 
-#message {
-    margin-top: 14px;
-    color: #555;
-    min-height: 20px;
-    font-size: 0.95em;
+/* Storage panel */
+.storage-bar-wrap {
+    background: #e9ecef;
+    border-radius: 6px;
+    height: 18px;
+    margin: 10px 0 4px;
+    overflow: hidden;
 }
-.poll-note {
-    margin-top: 28px;
-    font-size: 0.82em;
-    color: #aaa;
+.storage-bar {
+    height: 100%;
+    background: #0d6efd;
+    border-radius: 6px;
+    transition: width 0.4s;
 }
+.storage-bar.warn  { background: #fd7e14; }
+.storage-bar.crit  { background: #dc3545; }
+.storage-meta {
+    font-size: 0.85em;
+    color: #666;
+    margin-bottom: 14px;
+}
+.orphan-list {
+    font-size: 0.9em;
+    margin: 10px 0;
+    max-height: 180px;
+    overflow-y: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    padding: 8px 10px;
+    background: #f8f9fa;
+}
+.orphan-list li {
+    display: flex;
+    justify-content: space-between;
+    padding: 2px 0;
+    border-bottom: 1px solid #eee;
+}
+.orphan-list li:last-child { border-bottom: none; }
+#storage-msg { min-height: 18px; font-size: 0.9em; margin-top: 10px; color: #555; }
 </style>
 
-<div class="ec2-panel">
-    <h3><i class="fa fa-server"></i>&nbsp; EC2 Processing Node</h3>
-    <div class="instance-id">NodeODX on EC2</div>
-
-    <div>
-        <span id="state-badge" class="state-badge state-unknown">Checking…</span>
-    </div>
-
+<!-- ── EC2 section ──────────────────────────────────────── -->
+<div class="wec2-section" style="text-align:center;">
+    <h4><i class="fa fa-server"></i>&nbsp; EC2 Processing Node</h4>
+    <span id="state-badge" class="state-badge state-unknown">Checking…</span>
+    <br>
     <button id="start-btn" class="btn btn-success btn-lg" onclick="startEC2()" disabled>
         <i class="fa fa-play"></i>&nbsp; Start EC2
     </button>
+    <p id="ec2-msg" style="min-height:18px; margin-top:10px; color:#555; font-size:0.9em;"></p>
+</div>
 
-    <p id="message"></p>
-    <p class="poll-note">Status refreshes every 10 seconds.</p>
+<!-- ── Storage section ────────────────────────────────────── -->
+<div class="wec2-section">
+    <h4><i class="fa fa-hdd"></i>&nbsp; Railway Volume Storage</h4>
+    <div class="storage-bar-wrap">
+        <div id="storage-bar" class="storage-bar" style="width:0%"></div>
+    </div>
+    <div id="storage-meta" class="storage-meta">Loading…</div>
+
+    <div id="orphan-section" style="display:none;">
+        <b id="orphan-title"></b>
+        <ul id="orphan-list" class="orphan-list"></ul>
+        <button class="btn btn-warning btn-sm" onclick="runCleanup()">
+            <i class="fa fa-trash"></i>&nbsp; Delete orphaned files
+        </button>
+    </div>
+    <div id="no-orphans" style="display:none; color:#155724;">
+        <i class="fa fa-check-circle"></i>&nbsp; No orphaned files found — storage is clean.
+    </div>
+    <p id="storage-msg"></p>
+    <button class="btn btn-outline-secondary btn-sm" style="margin-top:6px;" onclick="loadStorage()">
+        <i class="fa fa-sync"></i>&nbsp; Refresh
+    </button>
 </div>
 
 <script>
 (function () {
     var csrf = document.querySelector('[name=csrfmiddlewaretoken]').value;
 
+    /* ── helpers ── */
+    function fmt(bytes) {
+        if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + ' GB';
+        if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + ' MB';
+        return (bytes / 1e3).toFixed(0) + ' KB';
+    }
+
+    /* ── EC2 ── */
     var STATE_LABELS = {
-        running:  'Running ✓',
-        stopped:  'Stopped',
-        starting: 'Starting…',
-        pending:  'Starting…',
-        stopping: 'Stopping…',
+        running: 'Running ✓', stopped: 'Stopped',
+        starting: 'Starting…', pending: 'Starting…', stopping: 'Stopping…',
     };
 
-    function setState(state, msg) {
+    function setEC2State(state, msg) {
         var badge = document.getElementById('state-badge');
         badge.textContent = STATE_LABELS[state] || state;
         badge.className = 'state-badge state-' + (STATE_LABELS[state] ? state : 'unknown');
-
-        var btn = document.getElementById('start-btn');
-        btn.disabled = (state !== 'stopped');
-
-        if (msg !== undefined) {
-            document.getElementById('message').textContent = msg;
-        }
+        document.getElementById('start-btn').disabled = state !== 'stopped';
+        if (msg !== undefined) document.getElementById('ec2-msg').textContent = msg;
     }
 
-    function checkStatus() {
+    function checkEC2() {
         fetch('status', { credentials: 'same-origin' })
             .then(function (r) { return r.json(); })
-            .then(function (data) {
-                if (data.state) setState(data.state, '');
-                else setState('unknown', data.error || 'Unknown error');
-            })
-            .catch(function () { setState('unknown', 'Could not reach server'); });
+            .then(function (d) { setEC2State(d.state || 'unknown', ''); })
+            .catch(function () { setEC2State('unknown', 'Could not reach server'); });
     }
 
     window.startEC2 = function () {
-        setState('starting', 'Sending start command…');
+        setEC2State('starting', 'Sending start command…');
         fetch('start', {
-            method: 'POST',
-            credentials: 'same-origin',
+            method: 'POST', credentials: 'same-origin',
             headers: { 'X-CSRFToken': csrf },
         })
         .then(function (r) { return r.json(); })
-        .then(function (data) {
-            if (data.state) setState(data.state, data.message || '');
-            else setState('unknown', data.error || 'Error');
-        })
-        .catch(function () { setState('unknown', 'Request failed'); });
+        .then(function (d) { setEC2State(d.state || 'unknown', d.message || d.error || ''); })
+        .catch(function () { setEC2State('unknown', 'Request failed'); });
     };
 
-    checkStatus();
-    setInterval(checkStatus, 10000);
+    /* ── Storage ── */
+    window.loadStorage = function () {
+        document.getElementById('storage-meta').textContent = 'Scanning… (may take a moment)';
+        document.getElementById('orphan-section').style.display = 'none';
+        document.getElementById('no-orphans').style.display = 'none';
+        document.getElementById('storage-msg').textContent = '';
+
+        fetch('storage', { credentials: 'same-origin' })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (d.error) {
+                    document.getElementById('storage-meta').textContent = 'Error: ' + d.error;
+                    return;
+                }
+                var pct = Math.round(d.used / d.total * 100);
+                var bar = document.getElementById('storage-bar');
+                bar.style.width = pct + '%';
+                bar.className = 'storage-bar' + (pct >= 90 ? ' crit' : pct >= 75 ? ' warn' : '');
+                document.getElementById('storage-meta').textContent =
+                    fmt(d.used) + ' used of ' + fmt(d.total) + ' (' + pct + '%)' +
+                    (d.orphaned_size > 0 ? ' — ' + fmt(d.orphaned_size) + ' in orphaned files' : '');
+
+                if (d.orphaned && d.orphaned.length > 0) {
+                    var list = document.getElementById('orphan-list');
+                    list.innerHTML = '';
+                    d.orphaned.forEach(function (o) {
+                        var li = document.createElement('li');
+                        li.innerHTML = '<span style="font-family:monospace; font-size:0.85em;">' +
+                            o.task_id.substring(0, 8) + '…</span><span>' + fmt(o.size) + '</span>';
+                        list.appendChild(li);
+                    });
+                    document.getElementById('orphan-title').textContent =
+                        d.orphaned.length + ' orphaned task director' +
+                        (d.orphaned.length === 1 ? 'y' : 'ies') + ' (' + fmt(d.orphaned_size) + ')';
+                    document.getElementById('orphan-section').style.display = 'block';
+                } else {
+                    document.getElementById('no-orphans').style.display = 'block';
+                }
+            })
+            .catch(function () {
+                document.getElementById('storage-meta').textContent = 'Failed to load storage info';
+            });
+    };
+
+    window.runCleanup = function () {
+        if (!confirm('Delete all orphaned task directories? This cannot be undone.')) return;
+        document.getElementById('storage-msg').textContent = 'Cleaning up…';
+        document.getElementById('orphan-section').style.display = 'none';
+
+        fetch('cleanup', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'X-CSRFToken': csrf },
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (d.error) {
+                document.getElementById('storage-msg').textContent = 'Error: ' + d.error;
+                return;
+            }
+            document.getElementById('storage-msg').textContent =
+                'Done — deleted ' + d.deleted + ' director' + (d.deleted === 1 ? 'y' : 'ies') +
+                ', freed ' + fmt(d.freed) +
+                (d.errors.length > 0 ? ' (' + d.errors.length + ' errors)' : '') + '.';
+            loadStorage();
+        })
+        .catch(function () {
+            document.getElementById('storage-msg').textContent = 'Cleanup request failed';
+        });
+    };
+
+    /* ── init ── */
+    checkEC2();
+    setInterval(checkEC2, 10000);
+    loadStorage();
 }());
 </script>
 {% endblock %}

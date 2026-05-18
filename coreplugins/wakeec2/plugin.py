@@ -3,8 +3,11 @@ from django.shortcuts import render
 from django.http import JsonResponse
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST
+from django.conf import settings
 import boto3
 import os
+import shutil
+import subprocess
 import logging
 
 log = logging.getLogger('app.logger')
@@ -22,6 +25,51 @@ def _get_state():
     return r["Reservations"][0]["Instances"][0]["State"]["Name"]
 
 
+def _dir_size_bytes(path):
+    """Fast directory size via du."""
+    try:
+        r = subprocess.run(
+            ["du", "-sb", path],
+            capture_output=True, text=True, timeout=30
+        )
+        return int(r.stdout.split()[0]) if r.returncode == 0 else 0
+    except Exception:
+        return 0
+
+
+def _find_orphaned_dirs():
+    """
+    Scan WebODM media/project/*/task/* and return directories
+    whose task UUID is not in the database.
+    """
+    from app.models import Task as WOTask
+
+    media_root = settings.MEDIA_ROOT
+    active_ids = set(str(t.id) for t in WOTask.objects.all())
+
+    orphaned = []
+    projects_path = os.path.join(media_root, "project")
+
+    if not os.path.isdir(projects_path):
+        return orphaned
+
+    for pid in os.listdir(projects_path):
+        task_path = os.path.join(projects_path, pid, "task")
+        if not os.path.isdir(task_path):
+            continue
+        for tid in os.listdir(task_path):
+            if tid not in active_ids:
+                full_path = os.path.join(task_path, tid)
+                orphaned.append({
+                    "path": full_path,
+                    "task_id": tid,
+                    "project_id": pid,
+                    "size": _dir_size_bytes(full_path),
+                })
+
+    return orphaned
+
+
 class Plugin(PluginBase):
     def main_menu(self):
         return [Menu("Wake EC2", self.public_url(""), "fa fa-power-off fa-fw")]
@@ -32,8 +80,10 @@ class Plugin(PluginBase):
         @login_required
         def index(request):
             return render(request, plugin.template_path("wakeec2.html"), {
-                'title': 'Wake EC2',
+                "title": "Wake EC2",
             })
+
+        # ── EC2 endpoints ─────────────────────────────────────────────────────
 
         @login_required
         @require_POST
@@ -46,7 +96,7 @@ class Plugin(PluginBase):
                 if state == "running":
                     return JsonResponse({"state": "running", "message": "EC2 is already running"})
                 if state not in ("stopped",):
-                    return JsonResponse({"state": state, "message": "EC2 is {}  — wait a moment".format(state)})
+                    return JsonResponse({"state": state, "message": "EC2 is {} — wait a moment".format(state)})
                 _ec2_client().start_instances(InstanceIds=[iid])
                 return JsonResponse({"state": "starting", "message": "EC2 is starting — takes ~2 minutes"})
             except Exception as e:
@@ -63,8 +113,53 @@ class Plugin(PluginBase):
                 log.error("Wake EC2 status error: %s", e)
                 return JsonResponse({"error": str(e)}, status=500)
 
+        # ── Storage endpoints ──────────────────────────────────────────────────
+
+        @login_required
+        def storage(request):
+            try:
+                media_root = settings.MEDIA_ROOT
+                total, used, free = shutil.disk_usage(media_root)
+                orphaned = _find_orphaned_dirs()
+                return JsonResponse({
+                    "total": total,
+                    "used": used,
+                    "free": free,
+                    "orphaned": orphaned,
+                    "orphaned_size": sum(o["size"] for o in orphaned),
+                })
+            except Exception as e:
+                log.error("Wake EC2 storage error: %s", e)
+                return JsonResponse({"error": str(e)}, status=500)
+
+        @login_required
+        @require_POST
+        def cleanup(request):
+            if not request.user.is_staff:
+                return JsonResponse({"error": "Admin only"}, status=403)
+            try:
+                orphaned = _find_orphaned_dirs()
+                deleted = []
+                errors = []
+                freed = 0
+                for o in orphaned:
+                    try:
+                        shutil.rmtree(o["path"])
+                        deleted.append(o["path"])
+                        freed += o["size"]
+                        log.info("Cleaned orphaned task dir: %s", o["path"])
+                    except Exception as e:
+                        errors.append({"path": o["path"], "error": str(e)})
+                        log.error("Failed to clean %s: %s", o["path"], e)
+                return JsonResponse({"deleted": len(deleted), "freed": freed, "errors": errors})
+            except Exception as e:
+                log.error("Wake EC2 cleanup error: %s", e)
+                return JsonResponse({"error": str(e)}, status=500)
+
         return [
-            MountPoint('$', index),
-            MountPoint('start$', start),
-            MountPoint('status$', status),
+            MountPoint("$", index),
+            MountPoint("start$", start),
+            MountPoint("status$", status),
+            MountPoint("storage$", storage),
+            MountPoint("cleanup$", cleanup),
         ]
