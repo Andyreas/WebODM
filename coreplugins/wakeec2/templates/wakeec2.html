@@ -78,6 +78,9 @@
     <button id="start-btn" class="btn btn-success btn-lg" onclick="startEC2()" disabled>
         <i class="fa fa-play"></i>&nbsp; Start EC2
     </button>
+    <button id="reboot-btn" class="btn btn-warning btn-lg" onclick="rebootEC2()" style="margin-left:8px;" disabled>
+        <i class="fa fa-redo"></i>&nbsp; Reboot EC2
+    </button>
     <p id="ec2-msg" style="min-height:18px; margin-top:10px; color:#555; font-size:0.9em;"></p>
 </div>
 
@@ -132,8 +135,8 @@
         } else if (ec2 === 'stopped') {
             label = 'Stopped';
             cls   = 'state-stopped';
-        } else if (ec2 === 'starting' || ec2 === 'pending') {
-            label = 'EC2 Starting…';
+        } else if (ec2 === 'starting' || ec2 === 'pending' || ec2 === 'rebooting') {
+            label = ec2 === 'rebooting' ? 'Rebooting…' : 'EC2 Starting…';
             cls   = 'state-starting';
         } else if (ec2 === 'stopping') {
             label = 'Stopping…';
@@ -145,7 +148,9 @@
 
         badge.textContent = label;
         badge.className   = 'state-badge ' + cls;
-        document.getElementById('start-btn').disabled = (ec2 !== 'stopped');
+        document.getElementById('start-btn').disabled  = (ec2 !== 'stopped');
+        document.getElementById('reboot-btn').disabled = (ec2 !== 'running' && ec2 !== 'rebooting') || false;
+        document.getElementById('reboot-btn').disabled = !(ec2 === 'running');
         if (msg !== undefined) document.getElementById('ec2-msg').textContent = msg;
     }
 
@@ -159,6 +164,18 @@
     window.startEC2 = function () {
         setStatus({ec2: 'starting', nodeodx: false}, 'Sending start command…');
         fetch('start', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'X-CSRFToken': csrf },
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (d) { setStatus(d, d.message || d.error || ''); })
+        .catch(function () { setStatus({ec2: 'unknown'}, 'Request failed'); });
+    };
+
+    window.rebootEC2 = function () {
+        if (!confirm('Reboot EC2? NodeODX will be unavailable for ~2 minutes.')) return;
+        setStatus({ec2: 'rebooting', nodeodx: false}, 'Rebooting — NodeODX ready in ~2 minutes…');
+        fetch('reboot', {
             method: 'POST', credentials: 'same-origin',
             headers: { 'X-CSRFToken': csrf },
         })

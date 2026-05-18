@@ -105,6 +105,19 @@ class Plugin(PluginBase):
 
         @login_required
         @require_POST
+        def reboot(request):
+            iid = os.environ.get("EC2_INSTANCE_ID", "")
+            if not iid:
+                return JsonResponse({"error": "EC2_INSTANCE_ID not configured"}, status=500)
+            try:
+                _ec2_client().reboot_instances(InstanceIds=[iid])
+                return JsonResponse({"ec2": "rebooting", "nodeodx": False, "message": "EC2 rebooting — NodeODX ready in ~2 minutes"})
+            except Exception as e:
+                log.error("Wake EC2 reboot error: %s", e)
+                return JsonResponse({"error": str(e)}, status=500)
+
+        @login_required
+        @require_POST
         def start(request):
             iid = os.environ.get("EC2_INSTANCE_ID", "")
             if not iid:
@@ -179,6 +192,7 @@ class Plugin(PluginBase):
         return [
             MountPoint("$", index),
             MountPoint("start$", start),
+            MountPoint("reboot$", reboot),
             MountPoint("status$", status),
             MountPoint("storage$", storage),
             MountPoint("cleanup$", cleanup),
