@@ -22,7 +22,7 @@
     text-transform: capitalize;
     margin: 10px 0 16px;
 }
-.state-running  { background: #d4edda; color: #155724; }
+.state-ready    { background: #d4edda; color: #155724; }
 .state-stopped  { background: #f8d7da; color: #721c24; }
 .state-starting,
 .state-pending  { background: #fff3cd; color: #856404; }
@@ -116,36 +116,55 @@
         return (bytes / 1e3).toFixed(0) + ' KB';
     }
 
-    /* ── EC2 ── */
-    var STATE_LABELS = {
-        running: 'Running ✓', stopped: 'Stopped',
-        starting: 'Starting…', pending: 'Starting…', stopping: 'Stopping…',
-    };
-
-    function setEC2State(state, msg) {
+    /* ── EC2 + NodeODX ── */
+    function setStatus(d, msg) {
         var badge = document.getElementById('state-badge');
-        badge.textContent = STATE_LABELS[state] || state;
-        badge.className = 'state-badge state-' + (STATE_LABELS[state] ? state : 'unknown');
-        document.getElementById('start-btn').disabled = state !== 'stopped';
+        var ec2 = d.ec2 || 'unknown';
+        var nodeodx = d.nodeodx;
+        var label, cls;
+
+        if (nodeodx === true) {
+            label = 'NodeODX Ready ✓';
+            cls   = 'state-ready';
+        } else if (ec2 === 'running') {
+            label = 'EC2 running — NodeODX starting up…';
+            cls   = 'state-starting';
+        } else if (ec2 === 'stopped') {
+            label = 'Stopped';
+            cls   = 'state-stopped';
+        } else if (ec2 === 'starting' || ec2 === 'pending') {
+            label = 'EC2 Starting…';
+            cls   = 'state-starting';
+        } else if (ec2 === 'stopping') {
+            label = 'Stopping…';
+            cls   = 'state-stopping';
+        } else {
+            label = ec2;
+            cls   = 'state-unknown';
+        }
+
+        badge.textContent = label;
+        badge.className   = 'state-badge ' + cls;
+        document.getElementById('start-btn').disabled = (ec2 !== 'stopped');
         if (msg !== undefined) document.getElementById('ec2-msg').textContent = msg;
     }
 
     function checkEC2() {
         fetch('status', { credentials: 'same-origin' })
             .then(function (r) { return r.json(); })
-            .then(function (d) { setEC2State(d.state || 'unknown', ''); })
-            .catch(function () { setEC2State('unknown', 'Could not reach server'); });
+            .then(function (d) { setStatus(d, ''); })
+            .catch(function () { setStatus({ec2: 'unknown'}, 'Could not reach server'); });
     }
 
     window.startEC2 = function () {
-        setEC2State('starting', 'Sending start command…');
+        setStatus({ec2: 'starting', nodeodx: false}, 'Sending start command…');
         fetch('start', {
             method: 'POST', credentials: 'same-origin',
             headers: { 'X-CSRFToken': csrf },
         })
         .then(function (r) { return r.json(); })
-        .then(function (d) { setEC2State(d.state || 'unknown', d.message || d.error || ''); })
-        .catch(function () { setEC2State('unknown', 'Request failed'); });
+        .then(function (d) { setStatus(d, d.message || d.error || ''); })
+        .catch(function () { setStatus({ec2: 'unknown'}, 'Request failed'); });
     };
 
     /* ── Storage ── */

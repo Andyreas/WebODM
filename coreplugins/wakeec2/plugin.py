@@ -9,8 +9,16 @@ import os
 import shutil
 import subprocess
 import logging
+try:
+    from urllib.request import urlopen
+    from urllib.error import URLError
+except ImportError:
+    from urllib2 import urlopen, URLError
 
 log = logging.getLogger('app.logger')
+
+NODEODX_URL   = lambda: os.environ.get("NODEODX_URL", "http://13.63.132.160:3000")
+NODEODX_TOKEN = lambda: os.environ.get("NODEODX_TOKEN", "PSKnodeodm2026")
 
 
 def _ec2_client():
@@ -23,6 +31,16 @@ def _get_state():
         raise ValueError("EC2_INSTANCE_ID environment variable not set")
     r = _ec2_client().describe_instances(InstanceIds=[iid])
     return r["Reservations"][0]["Instances"][0]["State"]["Name"]
+
+
+def _nodeodx_ready():
+    """Returns True if NodeODX /info responds with a valid reply."""
+    try:
+        url = "{}/info?token={}".format(NODEODX_URL(), NODEODX_TOKEN())
+        resp = urlopen(url, timeout=5)
+        return resp.status == 200
+    except Exception:
+        return False
 
 
 def _dir_size_bytes(path):
@@ -94,11 +112,11 @@ class Plugin(PluginBase):
             try:
                 state = _get_state()
                 if state == "running":
-                    return JsonResponse({"state": "running", "message": "EC2 is already running"})
+                    return JsonResponse({"ec2": "running", "nodeodx": _nodeodx_ready(), "message": "EC2 is already running"})
                 if state not in ("stopped",):
-                    return JsonResponse({"state": state, "message": "EC2 is {} — wait a moment".format(state)})
+                    return JsonResponse({"ec2": state, "nodeodx": False, "message": "EC2 is {} — wait a moment".format(state)})
                 _ec2_client().start_instances(InstanceIds=[iid])
-                return JsonResponse({"state": "starting", "message": "EC2 is starting — takes ~2 minutes"})
+                return JsonResponse({"ec2": "starting", "nodeodx": False, "message": "EC2 is starting — takes ~2 minutes"})
             except Exception as e:
                 log.error("Wake EC2 start error: %s", e)
                 return JsonResponse({"error": str(e)}, status=500)
@@ -108,7 +126,9 @@ class Plugin(PluginBase):
             if not os.environ.get("EC2_INSTANCE_ID", ""):
                 return JsonResponse({"error": "EC2_INSTANCE_ID not configured"}, status=500)
             try:
-                return JsonResponse({"state": _get_state()})
+                ec2_state = _get_state()
+                nodeodx = _nodeodx_ready() if ec2_state == "running" else False
+                return JsonResponse({"ec2": ec2_state, "nodeodx": nodeodx})
             except Exception as e:
                 log.error("Wake EC2 status error: %s", e)
                 return JsonResponse({"error": str(e)}, status=500)
